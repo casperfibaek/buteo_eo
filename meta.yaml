@@ -1,0 +1,33 @@
+package:
+  name: buteo_eo
+  version: "0.1.0"
+
+source:
+  # path: setup.py
+  git_rev: "0.1.0"
+  git_url: https://github.com/casperfibaek/buteo_eo.git
+
+build:
+  number: 0
+  script: "$PYTHON -m pip install . --no-deps --ignore-installed -vv "
+
+requirements:
+  build:
+    - python
+    - setuptools
+
+  run:
+    - python
+    - gdal
+    - numba
+
+test:
+  imports:
+    - buteo_eo
+
+about:
+  home: https://github.com/casperfibaek/buteo_eo/
+  license: MIT
+  license_familY: MIT
+  license_file: LICENSE
+  summary: "GIS-thonic way of working with EO data."
