@@ -11,7 +11,7 @@ def readme():
 
 setup(
     name="Buteo_eo",
-    version="0.1.0",
+    version="0.1.1",
     author="Casper Fibaek",
     author_email="casperfibaek@gmail.com",
     description="A pythonic way of working with EO data",
@@ -34,4 +34,4 @@ setup(
 )
 
 # pdoc3 --html --output-dir docs --config show_source_code=False buteo
-# conda build purge; conda build . --py 3.9 --py 3.10; bash build_script
+# conda build purge; conda build . --py 3.9 --py 3.10 -c casperfibaek -c conda-forge; bash build_script
