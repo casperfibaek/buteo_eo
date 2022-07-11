@@ -1,5 +1,6 @@
 from setuptools import setup, find_packages
 
+VERSION = "0.1.0"
 
 def readme():
     try:
@@ -32,6 +33,3 @@ setup(
     install_requires=[],
     include_package_data=True,
 )
-
-# pdoc3 --html --output-dir docs --config show_source_code=False buteo
-# conda build purge; conda build . --py 3.9 --py 3.10 -c casperfibaek -c conda-forge; bash build_script
