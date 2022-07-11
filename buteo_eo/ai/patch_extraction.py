@@ -6,12 +6,14 @@ TODO:
     - Explain options
 """
 
+# standard
 import os
+import sys; sys.path.append("../../") # Path: buteo_eo/ai/patch_extraction.py
 from uuid import uuid4
 
+# external
 import numpy as np
 from osgeo import ogr, gdal
-
 from buteo.raster.io import (
     raster_to_array,
     array_to_raster,
@@ -27,8 +29,10 @@ from buteo.vector.attributes import vector_get_fids
 from buteo.vector.rasterize import rasterize_vector
 from buteo.utils.core import progress
 
-from ml_utils import get_offsets
-from patch_utils import get_overlaps
+# internal
+from buteo_eo.ai.ml_utils import get_offsets
+from buteo_eo.ai.patch_utils import get_overlaps
+
 
 def extract_patches(
     raster_list,
@@ -170,6 +174,7 @@ def extract_patches(
                 extent = clip_raster(
                     raster,
                     clip_geom=fid_path,
+                    out_path="/vsimem/tmp_extent_raster.tif",
                     adjust_bbox=True,
                     all_touch=False,
                     to_extent=True,
@@ -180,7 +185,7 @@ def extract_patches(
                     (raster_metadata["pixel_width"], raster_metadata["pixel_height"]),
                     out_path=valid_path,
                     extent=extent,
-                )           
+                )
 
             gdal.Unlink(extent)
             valid_arr = raster_to_array(valid_path)
@@ -202,10 +207,11 @@ def extract_patches(
                 print(error_message)
 
                 gdal.Unlink(fid_path)
-
                 continue
 
             arr = raster_to_array(raster_clip_path)
+
+            gdal.Unlink(raster_clip_path)
 
             if arr.shape[:2] != valid_arr.shape[:2]:
                 raise Exception(
