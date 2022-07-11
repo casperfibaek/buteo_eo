@@ -1,12 +1,12 @@
 package:
   name: buteo_eo
-  version: "0.1.1"
+  version: "0.1.0"
 
 source:
   path: ./
 
 # source:
-#   git_rev: "0.1.0"
+  git_rev: "0.1.0"
 #   git_url: https://github.com/casperfibaek/buteo_eo.git
 
 build:
@@ -21,8 +21,7 @@ requirements:
   run:
     - python
     - buteo
-    - gdal
-    - numba
+    - tensorflow
     - tqdm
     - requests
     - sentinelsat

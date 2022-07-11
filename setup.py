@@ -15,7 +15,7 @@ setup(
     version="0.1.1",
     author="Casper Fibaek",
     author_email="casperfibaek@gmail.com",
-    description="A pythonic way of working with EO data",
+    description="A pythonic way of working with EO data for Deep Learning",
     long_description=readme(),
     long_description_content_type="text/markdown",
     url="https://github.com/casperfibaek/buteo_eo",
