@@ -87,7 +87,7 @@ if clean:
         print(f"Removed {build}")
 
 # Build
-python_str = f"conda build {os. getcwd()} --py {' --py '.join(PYTHON)} -c conda-forge"
+python_str = f"conda build {os. getcwd()} --py {' --py '.join(PYTHON)} -c casperfibaek -c conda-forge"
 os.system(python_str)
 
 # Convert to other platforms
