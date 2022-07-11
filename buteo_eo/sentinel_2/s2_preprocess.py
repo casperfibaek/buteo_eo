@@ -103,9 +103,6 @@ def s2_ready_ml(
     for file in patches:
         os.remove(file)
 
-    import pdb; pdb.set_trace()
-
-
     if not resample_20m_to_10m:
         print("Extracting 20m patches..")
         patches = extract_patches(
