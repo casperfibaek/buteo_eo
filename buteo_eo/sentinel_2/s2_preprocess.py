@@ -65,8 +65,7 @@ def s2_ready_ml(
 
     print("Extracting 10m patches..")
     patches = []
-    for idx, path in enumerate(paths_10m):
-        if idx < 4: continue
+    for _idx, path in enumerate(paths_10m):
         print(f"Extracting patches from {os.path.basename(path)}")
         patch = extract_patches(path, outdir, 32, options={ "overlaps": overlaps })
         patches.append(patch)
