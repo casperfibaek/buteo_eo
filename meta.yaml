@@ -23,7 +23,6 @@ requirements:
     - buteo
     - tensorflow
     - tqdm
-    - requests
     - sentinelsat
 
 test:
@@ -35,4 +34,4 @@ about:
   license: MIT
   license_familY: MIT
   license_file: LICENSE
-  summary: "GIS-thonic way of working with EO data."
+  summary: "GIS-thonic way of working with EO and AI data."
