@@ -34,46 +34,38 @@ from buteo_eo.ai.ml_utils import get_offsets
 from buteo_eo.ai.patch_utils import get_overlaps
 
 
+# OBS the order is important do to the threading in s2_preprocess.
 def extract_patches(
     raster_list,
     outdir,
-    tile_size=32,
+    patch_size=32,
     zones=None,
-    options=None,
+    tolerance=0.0,
+    overlaps=True,
+    merge_output=True,
+    border_check=True,
+    force_align=True,
+    output_zone_masks=False,
+    mask_reference=None,
+    apply_mask=None,
+    fill_value=0,
+    zone_layer_id=0,
+    prefix="",
+    postfix="",
+    thread_id="",
+    verbose=False,
 ):
     """
     Generate patches for machine learning from rasters
     """
-    base_options = {
-        "overlaps": True,
-        "border_check": True,
-        "merge_output": True,
-        "force_align": False,
-        "output_zone_masks": False,
-        "apply_mask": None,
-        "mask_reference": None,
-        "tolerance": 0.0,
-        "fill_value": 0,
-        "zone_layer_id": 0,
-        "prefix": "",
-        "postfix": "",
-    }
-
-    if options is None:
-        options = base_options
-    else:
-        for key in options:
-            if key not in base_options:
-                raise ValueError(f"Invalid option: {key}")
-            base_options[key] = options[key]
-        options = base_options
-
 
     if zones is not None and not is_vector(zones):
         raise TypeError("Clip geom is invalid. Did you input a valid geometry?")
 
+    input_was_single_raster = False
     if not isinstance(raster_list, list):
         raster_list = [raster_list]
+        input_was_single_raster = True
 
     for raster in raster_list:
         if not is_raster(raster):
@@ -85,7 +77,7 @@ def extract_patches(
         )
 
     if not rasters_are_aligned(raster_list, same_extent=True):
-        if options["force_align"]:
+        if force_align:
             print(
                 "Rasters were not aligned. Realigning rasters due to force_align=True option."
             )
@@ -93,7 +85,7 @@ def extract_patches(
         else:
             raise ValueError("Rasters in raster_list are not aligned.")
 
-    offsets = get_offsets(tile_size) if options["overlaps"] else [[0, 0]]
+    offsets = get_offsets(patch_size) if overlaps else [[0, 0]]
     raster_metadata = raster_to_metadata(raster_list[0], create_geometry=True)
 
     if zones is None:
@@ -106,17 +98,19 @@ def extract_patches(
     if zones_meta["layer_count"] == 0:
         raise ValueError("Vector contains no layers.")
 
-    zones_layer_meta = zones_meta["layers"][options["zone_layer_id"]]
+    zones_layer_meta = zones_meta["layers"][zone_layer_id]
 
     if zones_layer_meta["geom_type"] not in ["Multi Polygon", "Polygon"]:
         raise ValueError("clip geom is not Polygon or Multi Polygon.")
 
     zones_ogr = open_vector(zones)
-    zones_layer = zones_ogr.GetLayer(options["zone_layer_id"])
+    zones_layer = zones_ogr.GetLayer(zone_layer_id)
     feature_defn = zones_layer.GetLayerDefn()
-    fids = vector_get_fids(zones_ogr, options["zone_layer_id"])
+    fids = vector_get_fids(zones_ogr, zone_layer_id)
 
-    progress(0, len(fids) * len(raster_list), "processing fids")
+    if verbose:
+        progress(0, len(fids) * len(raster_list), "processing fids")
+
     processed_fids = []
     processed = 0
 
@@ -130,7 +124,7 @@ def extract_patches(
         for fid in fids:
             feature = zones_layer.GetFeature(fid)
             geom = feature.GetGeometryRef()
-            fid_path = f"/vsimem/fid_mem_{uuid4().int}_{str(fid)}.shp"
+            fid_path = f"/vsimem/{thread_id}fid_mem_{uuid4().int}_{str(fid)}.shp"
             fid_ds = mem_driver.CreateDataSource(fid_path)
             fid_ds_lyr = fid_ds.CreateLayer(
                 "fid_layer",
@@ -144,11 +138,12 @@ def extract_patches(
             fid_ds.FlushCache()
             fid_ds.SyncToDisk()
 
-            valid_path = f"/vsimem/{options['prefix']}validmask_{str(fid)}{options['postfix']}.tif"
+            uuid_valid = str(uuid4().int)
+            valid_path = f"/vsimem/{thread_id}validmask_{str(fid)}_{uuid_valid}_{postfix}.tif"
 
-            if options["mask_reference"] is not None:
+            if mask_reference is not None:
                 extent = clip_raster(
-                    options["mask_reference"],
+                    mask_reference,
                     clip_geom=fid_path,
                     adjust_bbox=True,
                     all_touch=False,
@@ -157,7 +152,7 @@ def extract_patches(
 
                 tmp_rasterized_vector = rasterize_vector(
                     fid_path,
-                    options["mask_reference"],
+                    mask_reference,
                     extent=extent,
                 )
 
@@ -171,10 +166,11 @@ def extract_patches(
 
                 gdal.Unlink(tmp_rasterized_vector)
             else:
+                uuid_extent = str(uuid4().int)
                 extent = clip_raster(
                     raster,
                     clip_geom=fid_path,
-                    out_path="/vsimem/tmp_extent_raster.tif",
+                    out_path=f"/vsimem/{thread_id}tmp_extent_raster_{uuid_extent}_{str(idx)}.tif",
                     adjust_bbox=True,
                     all_touch=False,
                     to_extent=True,
@@ -192,7 +188,7 @@ def extract_patches(
 
             uuid = str(uuid4().int)
 
-            raster_clip_path = f"/vsimem/raster_{uuid}_{str(idx)}_clipped.tif"
+            raster_clip_path = f"/vsimem/{thread_id}raster_{uuid}_{str(idx)}_clipped.tif"
 
             try:
                 clip_raster(
@@ -218,66 +214,71 @@ def extract_patches(
                     f"Error while matching array shapes. Raster: {arr.shape}, Valid: {valid_arr.shape}"
                 )
 
-            arr_offsets = get_overlaps(arr, offsets, tile_size, options["border_check"])
+            arr_offsets = get_overlaps(arr, offsets, patch_size, border_check)
 
             arr = np.concatenate(arr_offsets)
             valid_offsets = np.concatenate(
-                get_overlaps(valid_arr, offsets, tile_size, options["border_check"])
+                get_overlaps(valid_arr, offsets, patch_size, border_check)
             )
 
             valid_mask = (
-                (1 - (valid_offsets.sum(axis=(1, 2)) / (tile_size * tile_size)))
-                <= options["tolerance"]
+                (1 - (valid_offsets.sum(axis=(1, 2)) / (patch_size * patch_size)))
+                <= tolerance
             )[:, 0]
 
             arr = arr[valid_mask]
             valid_masked = valid_offsets[valid_mask]
 
-            if options["merge_output"]:
+            if merge_output:
                 list_extracted.append(arr)
                 list_masks.append(valid_masked)
 
             else:
-                out_path = f"{outdir}{options['prefix']}{str(fid)}_{name}{options['postfix']}.npy"
-                np.save(out_path, arr.filled(options["fill_value"]))
+                out_path = f"{outdir}{prefix}{str(fid)}_{name}{postfix}.npy"
+                np.save(out_path, arr.filled(fill_value))
 
                 outputs.append(out_path)
 
-                if options["output_zone_masks"]:
+                if output_zone_masks:
                     np.save(
-                        f"{outdir}{options['prefix']}{str(fid)}_mask_{name}{options['postfix']}.npy",
-                        valid_masked.filled(options["fill_value"]),
+                        f"{outdir}{prefix}{str(fid)}_mask_{name}{postfix}.npy",
+                        valid_masked.filled(fill_value),
                     )
 
             if fid not in processed_fids:
                 processed_fids.append(fid)
 
             processed += 1
-            progress(processed, len(fids) * len(raster_list), "processing fids")
 
-            if not options["merge_output"]:
+            if verbose:
+                progress(processed, len(fids) * len(raster_list), "processing fids")
+
+            if not merge_output:
                 gdal.Unlink(fid_path)
 
             gdal.Unlink(valid_path)
 
-        if options["merge_output"]:
+        if merge_output:
 
-            out_arr = np.ma.concatenate(list_extracted).filled(options["fill_value"])
-            out_path = f"{outdir}{options['prefix']}{name}{options['postfix']}.npy"
+            out_arr = np.ma.concatenate(list_extracted).filled(fill_value)
+            out_path = f"{outdir}{prefix}{name}{postfix}.npy"
 
-            if options["apply_mask"] is None:
+            if apply_mask is None:
                 apply_mask = np.ones(out_arr.shape[0], dtype="bool")
             else:
-                apply_mask = options["apply_mask"]
+                apply_mask = apply_mask
 
             np.save(out_path, out_arr[apply_mask])
             outputs.append(out_path)
 
-            if options["output_zone_masks"]:
+            if output_zone_masks:
                 np.save(
-                    f"{outdir}{options['prefix']}mask_{name}{options['postfix']}.npy",
-                    np.ma.concatenate(list_masks).filled(options["fill_value"])[apply_mask],
+                    f"{outdir}{prefix}mask_{name}{postfix}.npy",
+                    np.ma.concatenate(list_masks).filled(fill_value)[apply_mask],
                 )
+
+    if input_was_single_raster:
+        return outputs[0]
 
     return outputs
 

@@ -266,9 +266,16 @@ def preprocess_coh(arr, target_low=0, target_high=1):
 
 
 def get_offsets(size):
+    offsets = []
     high_mid = size // 2
     high_low = high_mid // 2
     high_high = high_mid + high_low
+
+    if size % 2:
+        print("bob")
+    
+    if (size // 2) % 2:
+        print("bob2")
 
     return [
         [0, 0],
