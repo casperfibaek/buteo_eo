@@ -265,30 +265,32 @@ def preprocess_coh(arr, target_low=0, target_high=1):
     return preprocess_optical(arr, 0, 1, target_low, target_high)
 
 
-def get_offsets(size):
-    offsets = []
-    high_mid = size // 2
-    high_low = high_mid // 2
-    high_high = high_mid + high_low
+def get_offsets(size, number_of_offsets=9):
+    assert number_of_offsets <= 9, "Number of offsets must be nine or less"
+    offsets = [[0, 0]]
 
-    if size % 2:
-        print("bob")
-    
-    if (size // 2) % 2:
-        print("bob2")
+    if number_of_offsets == 0:
+        return offsets
 
-    return [
-        [0, 0],
-        [0, high_low],
-        [0, high_mid],
-        [0, high_high],
-        [high_low, high_low],
-        [high_mid, high_mid],
-        [high_high, high_high],
-        [high_low, 0],
-        [high_mid, 0],
-        [high_high, 0],
+    mid = size // 2
+    low = mid // 2
+    high = mid + low
+
+    additional_offsets = [
+        [mid, mid],
+        [0, mid],
+        [mid, 0],
+        [0, low],
+        [low, 0],
+        [high, 0],
+        [0, high],
+        [low, low],
+        [high, high],
     ]
+
+    offsets += additional_offsets[:number_of_offsets]
+
+    return offsets
 
 
 # Converts to decibel, thresholds between -30db and 10db and scales to -1 to 1

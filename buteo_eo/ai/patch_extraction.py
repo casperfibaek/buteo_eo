@@ -27,6 +27,7 @@ from buteo.raster.resample import resample_raster
 from buteo.vector.io import vector_to_metadata, is_vector, open_vector
 from buteo.vector.attributes import vector_get_fids
 from buteo.vector.rasterize import rasterize_vector
+from buteo.vector.reproject import reproject_vector
 from buteo.utils.core import progress
 
 # internal
@@ -39,9 +40,10 @@ def extract_patches(
     raster_list,
     outdir,
     patch_size=32,
-    zones=None,
-    tolerance=0.0,
-    overlaps=True,
+    aoi_mask=None,
+    aoi_mask_tolerance=0.0,
+    offsets=True,
+    offset_count=3,
     merge_output=True,
     border_check=True,
     force_align=True,
@@ -59,7 +61,7 @@ def extract_patches(
     Generate patches for machine learning from rasters
     """
 
-    if zones is not None and not is_vector(zones):
+    if aoi_mask is not None and not is_vector(aoi_mask):
         raise TypeError("Clip geom is invalid. Did you input a valid geometry?")
 
     input_was_single_raster = False
@@ -85,13 +87,19 @@ def extract_patches(
         else:
             raise ValueError("Rasters in raster_list are not aligned.")
 
-    offsets = get_offsets(patch_size) if overlaps else [[0, 0]]
+    offsets = get_offsets(patch_size, number_of_offsets=offset_count) if offsets else [[0, 0]]
     raster_metadata = raster_to_metadata(raster_list[0], create_geometry=True)
 
-    if zones is None:
-        zones = raster_metadata["extent_datasource_path"]
+    if aoi_mask is None:
+        aoi_mask = raster_metadata["extent_datasource_path"]
+    elif not is_vector(aoi_mask) and is_raster(aoi_mask):
+        aoi_mask = raster_to_metadata(aoi_mask, create_geometry=True)["extent_datasource_path"]
+    
+    aoi_mask = reproject_vector(aoi_mask, raster_metadata["projection"], prefix=str(thread_id) + "_", copy_if_same=True)
 
-    zones_meta = vector_to_metadata(zones)
+    # TODO: Delete if in memeory vector
+
+    zones_meta = vector_to_metadata(aoi_mask)
 
     mem_driver = ogr.GetDriverByName("ESRI Shapefile")
 
@@ -103,7 +111,7 @@ def extract_patches(
     if zones_layer_meta["geom_type"] not in ["Multi Polygon", "Polygon"]:
         raise ValueError("clip geom is not Polygon or Multi Polygon.")
 
-    zones_ogr = open_vector(zones)
+    zones_ogr = open_vector(aoi_mask)
     zones_layer = zones_ogr.GetLayer(zone_layer_id)
     feature_defn = zones_layer.GetLayerDefn()
     fids = vector_get_fids(zones_ogr, zone_layer_id)
@@ -223,7 +231,7 @@ def extract_patches(
 
             valid_mask = (
                 (1 - (valid_offsets.sum(axis=(1, 2)) / (patch_size * patch_size)))
-                <= tolerance
+                <= aoi_mask_tolerance
             )[:, 0]
 
             arr = arr[valid_mask]
@@ -276,6 +284,8 @@ def extract_patches(
                     f"{outdir}{prefix}mask_{name}{postfix}.npy",
                     np.ma.concatenate(list_masks).filled(fill_value)[apply_mask],
                 )
+    if aoi_mask is not None:
+        gdal.Unlink(aoi_mask)
 
     if input_was_single_raster:
         return outputs[0]

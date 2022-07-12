@@ -62,12 +62,16 @@ def normalise_s2_arr(
 
 def s2_ready_ml(
     s2_path_file,
-    outdir, *,
+    outdir,
+    *,
+    patch_size=32,
     process_20m=True,
-    patch_size_10m=32,
-    overlaps=False,
+    offsets=True,
+    offset_count=3,
     resample_20m_to_10m=False,
     resample_alg="bilinear",
+    aoi_mask=None,
+    aoi_mask_tolerance=0.0, # 0 means no tolerance for pixels outside of AIO mask
     use_multithreading=True,
     normalise=False,
     normalise_method="max_truncate",
@@ -80,7 +84,7 @@ def s2_ready_ml(
 ):
     paths = get_band_paths(s2_path_file)
 
-    assert patch_size_10m % 2 == 0, "Patch size must be even"
+    assert patch_size % 2 == 0, "Patch size must be even"
     assert outdir is not None, "Output directory must be specified"
     assert os.path.isdir(outdir), "Output directory must exist"
 
@@ -132,8 +136,11 @@ def s2_ready_ml(
             kwargs.append({
                 "raster_list": path,
                 "outdir": outdir,
-                "patch_size": patch_size_10m,
-                "overlaps": overlaps,
+                "patch_size": patch_size,
+                "offsets": offsets,
+                "offset_count": offset_count,
+                "aoi_mask": aoi_mask,
+                "aoi_mask_tolerance": aoi_mask_tolerance,
                 "thread_id": idx,
             })
 
@@ -144,10 +151,13 @@ def s2_ready_ml(
         for _idx, path in enumerate(paths_10m):
             print(f"Extracting patches from {os.path.basename(path)}")
             patch = extract_patches(
-                path,
-                outdir,
-                patch_size=patch_size_10m,
-                overlaps=overlaps,
+                raster_list=path,
+                outdir=outdir,
+                patch_size=patch_size,
+                offsets=offsets,
+                offset_count=offset_count,
+                aoi_mask=aoi_mask,
+                aoi_mask_tolerance=aoi_mask_tolerance,
             )
             patches.append(patch)
 
@@ -206,8 +216,11 @@ def s2_ready_ml(
                 kwargs.append({
                     "raster_list": path,
                     "outdir": outdir,
-                    "patch_size": patch_size_10m // 2,
-                    "overlaps": overlaps,
+                    "patch_size": patch_size // 2,
+                    "offsets": offsets,
+                    "offset_count": offset_count,
+                    "aoi_mask": aoi_mask,
+                    "aoi_mask_tolerance": aoi_mask_tolerance,
                     "thread_id": idx,
                 })
 
@@ -219,10 +232,13 @@ def s2_ready_ml(
                 print(f"Extracting patches from {os.path.basename(path)}")
                 
                 patch = extract_patches(
-                    path,
-                    outdir,
-                    patch_size=patch_size_10m // 2,
-                    overlaps=overlaps,
+                    raster_list=path,
+                    outdir=outdir,
+                    patch_size=patch_size // 2,
+                    offsets=offsets,
+                    offset_count=offset_count,
+                    aoi_mask=aoi_mask,
+                    aoi_mask_tolerance=aoi_mask_tolerance,
                 )
                 patches.append(patch)
 
@@ -252,7 +268,19 @@ def s2_ready_ml(
 if __name__ == "__main__":
     from glob import glob
     s2_path = "/home/casper/Desktop/data/sentinel2_images/"
+    beirut = "/home/casper/Desktop/data/beirut_boundary.gpkg"
     safe = glob(s2_path + "*.SAFE")[0]
     # s2_ready_ml(safe, s2_path, resample_20m_to_10m=False, process_20m=True)
-    bob = s2_ready_ml(safe, s2_path, resample_20m_to_10m=False, process_20m=True, normalise=True, normalise_original_max_value=10000.0)
-    import pdb; pdb.set_trace()
+    bob = s2_ready_ml(
+        safe,
+        s2_path,
+        resample_20m_to_10m=False,
+        process_20m=True,
+        normalise=False,
+        offsets=False,
+        aoi_mask=beirut,
+        aoi_mask_tolerance=0.0,
+        use_multithreading=True,
+        normalise_original_max_value=10000.0,
+    )
+    print(bob)
