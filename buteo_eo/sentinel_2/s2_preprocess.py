@@ -73,6 +73,7 @@ def s2_ready_ml(
     aoi_mask=None,
     aoi_mask_tolerance=0.0, # 0 means no tolerance for pixels outside of AIO mask
     use_multithreading=True,
+    include_downsampled_bands=False,
     normalise=False,
     normalise_method="max_truncate",
     normalise_target_max_value=1.0,
@@ -88,6 +89,9 @@ def s2_ready_ml(
     assert outdir is not None, "Output directory must be specified"
     assert os.path.isdir(outdir), "Output directory must exist"
 
+    if include_downsampled_bands and (not process_20m or resample_20m_to_10m):
+        raise ValueError("Cannot include downsampled bands if not processing 20m bands. Cannot resample 20m to 10m and include downsampled bands.")
+
     # 10 meter bands
     paths_10m = [
         paths["10m"]["B02"],
@@ -97,6 +101,13 @@ def s2_ready_ml(
     ]
 
     # 20 meter bands
+    paths_20m_downsampled = [
+        paths["20m"]["B02"],
+        paths["20m"]["B03"],
+        paths["20m"]["B04"],
+        # paths["20m"]["B08"], not included in 20m. Will be resampled from 10m
+    ]
+
     paths_20m = [
         paths["20m"]["B05"],
         paths["20m"]["B06"],
@@ -106,6 +117,17 @@ def s2_ready_ml(
         paths["20m"]["B12"],
         paths["20m"]["SCL"],
     ]
+
+    if include_downsampled_bands:
+        b08_resampled = resample_raster(
+            paths["10m"]["B08"],
+            target_size=paths["20m"]["B05"],
+            resample_alg="average",
+            postfix="_10m_to_20m",
+            dtype="uint16"
+        )
+        paths_20m_downsampled.append(b08_resampled)
+        paths_20m = paths_20m + paths_20m_downsampled
 
     outname_10m = "_".join(os.path.basename(paths["10m"]["B02"]).split("_")[:-2]) + "_10m.npz"
     outname_20m = "_".join(os.path.basename(paths["20m"]["B05"]).split("_")[:-2]) + "_20m.npz"
@@ -243,16 +265,33 @@ def s2_ready_ml(
                 patches.append(patch)
 
         print("Saving 20m patches..")
-        np.savez_compressed(
-            outdir + outname_20m,
-            B05=np.load(patches[0]) if not normalise else _norm(patches[0]),
-            B06=np.load(patches[1]) if not normalise else _norm(patches[1]),
-            B07=np.load(patches[2]) if not normalise else _norm(patches[2]),
-            B8A=np.load(patches[3]) if not normalise else _norm(patches[3]),
-            B11=np.load(patches[4]) if not normalise else _norm(patches[4]),
-            B12=np.load(patches[5]) if not normalise else _norm(patches[5]),
-            SCL=np.load(patches[6]) if not normalise else _norm(patches[6]),
-        )
+        if include_downsampled_bands:
+            gdal.Unlink(b08_resampled)
+            np.savez_compressed(
+                outdir + outname_20m,
+                B02=np.load(patches[0]) if not normalise else _norm(patches[0]),
+                B03=np.load(patches[1]) if not normalise else _norm(patches[1]),
+                B04=np.load(patches[2]) if not normalise else _norm(patches[2]),
+                B05=np.load(patches[4]) if not normalise else _norm(patches[4]),
+                B06=np.load(patches[5]) if not normalise else _norm(patches[5]),
+                B07=np.load(patches[6]) if not normalise else _norm(patches[6]),
+                B08=np.load(patches[3]) if not normalise else _norm(patches[3]),
+                B8A=np.load(patches[7]) if not normalise else _norm(patches[7]),
+                B11=np.load(patches[8]) if not normalise else _norm(patches[8]),
+                B12=np.load(patches[9]) if not normalise else _norm(patches[9]),
+                SCL=np.load(patches[10]) if not normalise else _norm(patches[10]),
+            )
+        else:
+            np.savez_compressed(
+                outdir + outname_20m,
+                B05=np.load(patches[0]) if not normalise else _norm(patches[0]),
+                B06=np.load(patches[1]) if not normalise else _norm(patches[1]),
+                B07=np.load(patches[2]) if not normalise else _norm(patches[2]),
+                B8A=np.load(patches[3]) if not normalise else _norm(patches[3]),
+                B11=np.load(patches[4]) if not normalise else _norm(patches[4]),
+                B12=np.load(patches[5]) if not normalise else _norm(patches[5]),
+                SCL=np.load(patches[6]) if not normalise else _norm(patches[6]),
+            )
 
         if clean:
             print("Cleaning 20m temporary files..")
@@ -281,6 +320,7 @@ if __name__ == "__main__":
         aoi_mask=beirut,
         aoi_mask_tolerance=0.0,
         use_multithreading=True,
+        include_downsampled_bands=True,
         normalise_original_max_value=10000.0,
     )
     print(bob)
