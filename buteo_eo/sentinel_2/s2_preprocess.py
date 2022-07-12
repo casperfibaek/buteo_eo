@@ -60,6 +60,11 @@ def normalise_s2_arr(
     return arr.astype(np.float32) if force_float32 else arr
 
 
+# TODO
+def augment_s2_arr(arr):
+    return arr
+
+
 def s2_ready_ml(
     s2_path_file,
     outdir,
@@ -74,15 +79,38 @@ def s2_ready_ml(
     aoi_mask_tolerance=0.0, # 0 means no tolerance for pixels outside of AIO mask
     use_multithreading=True,
     include_downsampled_bands=False,
-    normalise=False,
-    normalise_method="max_truncate",
-    normalise_target_max_value=1.0,
-    normalise_target_min_value=0.0,
-    normalise_original_max_value=10000.0,
-    normalise_original_min_value=0.0,
-    normalise_force_float32=True,
+    labels=None,
+    labels_attribute="class", # None creates a binary mask of 0-1
+    labels_baseline=0,
+    labels_resolution="match_10m",
+    labels_fuzz_from=False,
     clean=True,
 ):
+    """
+    This function takes a Sentinel 2 file and returns a ML dataset.
+
+    Args:
+        s2_path_file: Path to Sentinel 2 file.
+        outdir: Output directory.
+
+    Keyword Args:
+        patch_size: Size of patches to extract.
+        process_20m: Whether to process 20m bands.
+        offsets: Whether to extract offsets.
+        offset_count: Number of offsets to extract. (0-9)
+        resample_20m_to_10m: Whether to resample 20m bands to 10m.
+        resample_alg: Resampling algorithm to use.
+        aoi_mask: Path to AOI mask.
+        aoi_mask_tolerance: Tolerance for pixels outside of AOI mask.
+        use_multithreading: Whether to use multithreading.
+        include_downsampled_bands: Whether to include downsampled bands.
+        labels: Path to labels.
+        labels_attribute: Attribute to use for labels.
+        labels_baseline: Baseline value for labels.
+        labels_resolution: Resolution to use for labels.
+        labels_fuzz_from: Whether to fuzz labels from the original file.
+        clean: Whether to clean up temporary files.
+    """
     paths = get_band_paths(s2_path_file)
 
     assert patch_size % 2 == 0, "Patch size must be even"
@@ -183,17 +211,6 @@ def s2_ready_ml(
             )
             patches.append(patch)
 
-    def _norm(arr_file):
-        return normalise_s2_arr(
-            np.load(arr_file),
-            method=normalise_method,
-            target_max_value=normalise_target_max_value,
-            target_min_value=normalise_target_min_value,
-            original_max_value=normalise_original_max_value,
-            original_min_value=normalise_original_min_value,
-            force_float32=normalise_force_float32
-        )
-
     print("Saving 10m patches..")
     if resample_20m_to_10m and process_20m:
         for resampled_img in paths_20m_resampled_to_10m:
@@ -201,25 +218,25 @@ def s2_ready_ml(
 
         np.savez_compressed(
             outdir + outname_10m,
-            B02=np.load(patches[0]) if not normalise else _norm(patches[0]),
-            B03=np.load(patches[1]) if not normalise else _norm(patches[1]),
-            B04=np.load(patches[2]) if not normalise else _norm(patches[2]),
-            B05=np.load(patches[4]) if not normalise else _norm(patches[4]),
-            B06=np.load(patches[5]) if not normalise else _norm(patches[5]),
-            B07=np.load(patches[6]) if not normalise else _norm(patches[6]),
-            B08=np.load(patches[3]) if not normalise else _norm(patches[3]),
-            B8A=np.load(patches[7]) if not normalise else _norm(patches[7]),
-            B11=np.load(patches[8]) if not normalise else _norm(patches[8]),
-            B12=np.load(patches[9]) if not normalise else _norm(patches[9]),
-            SCL=np.load(patches[10]) if not normalise else _norm(patches[10]),
+            B02=np.load(patches[0]),
+            B03=np.load(patches[1]),
+            B04=np.load(patches[2]),
+            B05=np.load(patches[4]),
+            B06=np.load(patches[5]),
+            B07=np.load(patches[6]),
+            B08=np.load(patches[3]),
+            B8A=np.load(patches[7]),
+            B11=np.load(patches[8]),
+            B12=np.load(patches[9]),
+            SCL=np.load(patches[10]),
         )
     else:
         np.savez_compressed(
             outdir + outname_10m,
-            B02=np.load(patches[0]) if not normalise else _norm(patches[0]),
-            B03=np.load(patches[1]) if not normalise else _norm(patches[1]),
-            B04=np.load(patches[2]) if not normalise else _norm(patches[2]),
-            B08=np.load(patches[3]) if not normalise else _norm(patches[3]),
+            B02=np.load(patches[0]),
+            B03=np.load(patches[1]),
+            B04=np.load(patches[2]),
+            B08=np.load(patches[3]),
         )
 
     if clean:
@@ -269,28 +286,28 @@ def s2_ready_ml(
             gdal.Unlink(b08_resampled)
             np.savez_compressed(
                 outdir + outname_20m,
-                B02=np.load(patches[0]) if not normalise else _norm(patches[0]),
-                B03=np.load(patches[1]) if not normalise else _norm(patches[1]),
-                B04=np.load(patches[2]) if not normalise else _norm(patches[2]),
-                B05=np.load(patches[4]) if not normalise else _norm(patches[4]),
-                B06=np.load(patches[5]) if not normalise else _norm(patches[5]),
-                B07=np.load(patches[6]) if not normalise else _norm(patches[6]),
-                B08=np.load(patches[3]) if not normalise else _norm(patches[3]),
-                B8A=np.load(patches[7]) if not normalise else _norm(patches[7]),
-                B11=np.load(patches[8]) if not normalise else _norm(patches[8]),
-                B12=np.load(patches[9]) if not normalise else _norm(patches[9]),
-                SCL=np.load(patches[10]) if not normalise else _norm(patches[10]),
+                B02=np.load(patches[0]),
+                B03=np.load(patches[1]),
+                B04=np.load(patches[2]),
+                B05=np.load(patches[4]),
+                B06=np.load(patches[5]),
+                B07=np.load(patches[6]),
+                B08=np.load(patches[3]),
+                B8A=np.load(patches[7]),
+                B11=np.load(patches[8]),
+                B12=np.load(patches[9]),
+                SCL=np.load(patches[10]),
             )
         else:
             np.savez_compressed(
                 outdir + outname_20m,
-                B05=np.load(patches[0]) if not normalise else _norm(patches[0]),
-                B06=np.load(patches[1]) if not normalise else _norm(patches[1]),
-                B07=np.load(patches[2]) if not normalise else _norm(patches[2]),
-                B8A=np.load(patches[3]) if not normalise else _norm(patches[3]),
-                B11=np.load(patches[4]) if not normalise else _norm(patches[4]),
-                B12=np.load(patches[5]) if not normalise else _norm(patches[5]),
-                SCL=np.load(patches[6]) if not normalise else _norm(patches[6]),
+                B05=np.load(patches[0]),
+                B06=np.load(patches[1]),
+                B07=np.load(patches[2]),
+                B8A=np.load(patches[3]),
+                B11=np.load(patches[4]),
+                B12=np.load(patches[5]),
+                SCL=np.load(patches[6]),
             )
 
         if clean:
