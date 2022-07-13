@@ -7,6 +7,7 @@ TODO:
 """
 
 # standard
+from concurrent.futures import thread
 import os
 import sys; sys.path.append("../../") # Path: buteo_eo/ai/patch_extraction.py
 from uuid import uuid4
@@ -41,20 +42,17 @@ def extract_patches(
     patch_size=32,
     offsets=True,
     offset_count=3,
-    merge_output=True,
     border_check=True,
     force_align=False,
     aoi_mask=None,
     aoi_mask_tolerance=0.0,
     aoi_mask_layerid=0,
     aoi_mask_output=False,
-    aoi_mask_apply=False,
-    binary_mask=None,
-    binary_mask_apply=None,
-    binary_mask_fill_value=0,
+    aoi_mask_value=0,
     prefix="",
     postfix="",
     thread_id="",
+    thread_name="",
     verbose=False,
 ):
     """
@@ -121,6 +119,7 @@ def extract_patches(
     processed = 0
 
     outputs = []
+    outputs_masks = []
 
     for idx, raster in enumerate(raster_list):
         name = os.path.splitext(os.path.basename(raster))[0]
@@ -128,10 +127,14 @@ def extract_patches(
         list_masks = []
 
         for fid in fids:
+            path_valid =    f"/vsimem/{thread_id}_{uuid4().int}_{str(idx)}_{str(fid)}_valid.tif"
+            path_fid =      f"/vsimem/{thread_id}_{uuid4().int}_{str(idx)}_{str(fid)}_fid.shp"
+            path_extent =   f"/vsimem/{thread_id}_{uuid4().int}_{str(idx)}_{str(fid)}_extent.tif"
+            path_clip =     f"/vsimem/{thread_id}_{uuid4().int}_{str(idx)}_{str(fid)}_clip.tif"
+
             feature = zones_layer.GetFeature(fid)
             geom = feature.GetGeometryRef()
-            fid_path = f"/vsimem/{thread_id}fid_mem_{uuid4().int}_{str(fid)}.shp"
-            fid_ds = mem_driver.CreateDataSource(fid_path)
+            fid_ds = mem_driver.CreateDataSource(path_fid)
             fid_ds_lyr = fid_ds.CreateLayer(
                 "fid_layer",
                 geom_type=ogr.wkbPolygon,
@@ -144,63 +147,29 @@ def extract_patches(
             fid_ds.FlushCache()
             fid_ds.SyncToDisk()
 
-            uuid_valid = str(uuid4().int)
-            valid_path = f"/vsimem/{thread_id}validmask_{str(fid)}_{uuid_valid}_{postfix}.tif"
+            extent = clip_raster(
+                raster,
+                clip_geom=path_fid,
+                out_path=path_extent,
+                adjust_bbox=True,
+                all_touch=False,
+                to_extent=True,
+            )
 
-            if binary_mask is not None:
-                extent = clip_raster(
-                    binary_mask,
-                    clip_geom=fid_path,
-                    adjust_bbox=True,
-                    all_touch=False,
-                    to_extent=True,
-                )
+            rasterize_vector(
+                path_fid,
+                (raster_metadata["pixel_width"], raster_metadata["pixel_height"]),
+                out_path=path_valid,
+                extent=extent,
+            )
 
-                tmp_rasterized_vector = rasterize_vector(
-                    fid_path,
-                    binary_mask,
-                    extent=extent,
-                )
-
-                resample_raster(
-                    tmp_rasterized_vector,
-                    target_size=raster,
-                    resample_alg="nearest",
-                    out_path=valid_path,
-                    postfix="",
-                )
-
-                gdal.Unlink(tmp_rasterized_vector)
-            else:
-                uuid_extent = str(uuid4().int)
-                extent = clip_raster(
-                    raster,
-                    clip_geom=fid_path,
-                    out_path=f"/vsimem/{thread_id}tmp_extent_raster_{uuid_extent}_{str(idx)}.tif",
-                    adjust_bbox=True,
-                    all_touch=False,
-                    to_extent=True,
-                )
-
-                rasterize_vector(
-                    fid_path,
-                    (raster_metadata["pixel_width"], raster_metadata["pixel_height"]),
-                    out_path=valid_path,
-                    extent=extent,
-                )
-
-            gdal.Unlink(extent)
-            valid_arr = raster_to_array(valid_path)
-
-            uuid = str(uuid4().int)
-
-            raster_clip_path = f"/vsimem/{thread_id}raster_{uuid}_{str(idx)}_clipped.tif"
+            valid_arr = raster_to_array(path_valid)
 
             try:
                 clip_raster(
                     raster,
-                    clip_geom=valid_path,
-                    out_path=raster_clip_path,
+                    clip_geom=path_valid,
+                    out_path=path_clip,
                     all_touch=False,
                     adjust_bbox=False,
                 )
@@ -208,12 +177,14 @@ def extract_patches(
                 print(f"Warning: {raster} did not intersect geom with fid: {fid}.")
                 print(error_message)
 
-                gdal.Unlink(fid_path)
                 continue
 
-            arr = raster_to_array(raster_clip_path)
+            arr = raster_to_array(path_clip)
 
-            gdal.Unlink(raster_clip_path)
+            gdal.Unlink(extent)
+            gdal.Unlink(path_fid)
+            gdal.Unlink(path_valid)
+            gdal.Unlink(path_clip)
 
             if arr.shape[:2] != valid_arr.shape[:2]:
                 raise Exception(
@@ -234,24 +205,9 @@ def extract_patches(
 
             arr = arr[valid_mask]
             valid_masked = valid_offsets[valid_mask]
-
-            if aoi_mask_apply:
-                arr = np.ma.masked_array(arr, mask=valid_masked, fill_value=0)
             
-            if merge_output:
-                list_extracted.append(arr)
-                list_masks.append(valid_masked)
-            else:
-                out_path = f"{outdir}{prefix}{str(fid)}_{name}{postfix}.npy"
-                np.save(out_path, arr.filled(binary_mask_fill_value))
-
-                outputs.append(out_path)
-
-                if aoi_mask_output:
-                    np.save(
-                        f"{outdir}{prefix}{str(fid)}_mask_{name}{postfix}.npy",
-                        valid_masked.filled(binary_mask_fill_value),
-                    )
+            list_extracted.append(arr)
+            list_masks.append(valid_masked)
                 
             if fid not in processed_fids:
                 processed_fids.append(fid)
@@ -261,41 +217,30 @@ def extract_patches(
             if verbose:
                 progress(processed, len(fids) * len(raster_list), "processing fids")
 
-            if not merge_output:
-                gdal.Unlink(fid_path)
 
-            gdal.Unlink(valid_path)
+        out_arr = np.ma.concatenate(list_extracted).filled(aoi_mask_value)
+        out_path = f"{outdir}{prefix}{name}{postfix}.npy"
+        outputs.append(out_path)
 
-        if merge_output:
+        np.save(out_path, out_arr)
 
-            if aoi_mask is not None and aoi_mask_apply:
-                out_arr = np.ma.concatenate(list_extracted)
-            else:
-                out_arr = np.ma.concatenate(list_extracted).filled(binary_mask_fill_value)
+        if aoi_mask_output:
+            out_mask_path = f"{outdir}{prefix}{name}_mask{postfix}.npy"
 
+            out_mask = np.ma.concatenate(list_masks).filled(aoi_mask_value)
+            outputs_masks.append(out_mask_path)
 
-            out_path = f"{outdir}{prefix}{name}{postfix}.npy"
+            np.save(out_mask_path, out_mask)
+        else:
+            outputs_masks.append(None)
 
-            if binary_mask_apply is None:
-                binary_mask_apply = np.ones(out_arr.shape[0], dtype="bool")
-            else:
-                binary_mask_apply = binary_mask_apply
-
-            np.save(out_path, out_arr[binary_mask_apply])
-            outputs.append(out_path)
-
-            if aoi_mask_output:
-                np.save(
-                    f"{outdir}{prefix}mask_{name}{postfix}.npy",
-                    np.ma.concatenate(list_masks).filled(binary_mask_fill_value)[binary_mask_apply],
-                )
     if aoi_mask is not None:
         gdal.Unlink(aoi_mask)
 
     if input_was_single_raster:
-        return outputs[0]
-
-    return outputs
+        return outputs[0], outputs_masks[0], thread_name
+    
+    return outputs, outputs_masks, [thread_name] * len(outputs)
 
 
 def rasterize_labels(
