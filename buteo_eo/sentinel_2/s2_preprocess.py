@@ -6,6 +6,7 @@ Turn a Sentinel 2 file into a ML dataset.
 import os
 import sys; sys.path.append("../../") # Path: buteo_eo/sentinel_2/s2_preprocess.py
 from concurrent.futures import ThreadPoolExecutor
+import pickle
 
 # external
 import numpy as np
@@ -15,7 +16,7 @@ from buteo.filters.norm_rasters import norm_to_range
 
 # internal
 from buteo_eo.ai.patch_extraction import extract_patches
-from buteo_eo.sentinel_2.s2_utils import get_band_paths
+from buteo_eo.sentinel_2.s2_utils import get_band_paths, get_metadata
 
 
 def normalise_s2_arr(
@@ -70,12 +71,15 @@ def normalise_s2_ml(npz_file):
         if file == "SCL":
             normed[file] = loaded[file]
             continue
+    
+        if loaded[file] is None:
+            continue
 
         print(f"Normalising: {file}")
         normed[file] = normalise_s2_arr(loaded[file])
     
     outname = os.path.join(os.path.dirname(npz_file), os.path.splitext(os.path.basename(npz_file))[0] + "_normed.npz")
-    np.savez(outname, **normed)
+    np.savez_compressed(outname, **normed)
 
 
 # TODO
@@ -105,6 +109,7 @@ def s2_ready_ml(
     labels_resolution="match_10m",
     labels_fuzz_from=False,
     labels_fuzz=False,
+    save_metadata=True,
     use_multithreading=True,
     tmpdir=None,
     clean=True,
@@ -150,12 +155,18 @@ def s2_ready_ml(
     if tmpdir is None:
         tmpdir = outdir
 
-    all_bands = ["B02", "B03", "B04", "B05", "B06", "B07", "B08", "B8A", "B09", "B10", "B11", "B12", "SCL"]
+    bands_10m = ["B02", "B03", "B04", "B08"]
+    bands_20m = ["B05", "B06", "B07", "B8A", "B11", "B12", "SCL"] 
+    all_bands = bands_10m + bands_20m
+
     if process_bands == "all" or process_bands is None or process_bands is False or len(process_bands) == 0:
         process_bands = all_bands
     else:
         for band in process_bands:
             assert band in all_bands, f"Band {band} is not a valid band"
+    
+    if process_20m and not any(x in bands_20m for x in process_bands):
+        raise ValueError("Cannot process 20m bands if non of them are in process_bands")
 
     # 10 meter bands
     paths_10m = [
@@ -180,7 +191,7 @@ def s2_ready_ml(
         { "name": "B8A", "path": paths["20m"]["B8A"], "size": 20 },
         { "name": "B11", "path": paths["20m"]["B11"], "size": 20 },
         { "name": "B12", "path": paths["20m"]["B12"], "size": 20 },
-        { "name": "SCL", "path": paths["20m"]["SCL"], "size": 20 },
+        { "name": "SCL", "path": paths["20m"]["SCL"], "size": 20 }, # must be last in list
     ]
 
     if include_downsampled_bands:
@@ -210,7 +221,7 @@ def s2_ready_ml(
         if resample_20m_to_10m and process_20m:
 
             print("Resampling 20m to 10m..")
-            paths_to_resample = [d["path"] for d in paths_20m if d["name"] in process_bands]
+            paths_to_resample = [d["path"] for d in paths_20m if d["name"] in process_bands and d["name"] != "SCL"]
 
             if len(paths_to_resample) == 0:
                 raise ValueError("No bands selected to resample. Please add 20m bands to process_bands or set process_20m to False.")
@@ -227,6 +238,20 @@ def s2_ready_ml(
             for i, path in enumerate(paths_20m_resampled_to_10m):
                 paths_20m[i]["path"] = path
                 paths_20m[i]["size"] = 10
+            
+            # SCL is uint8 instead of uint16 and must be resampled with nearest.
+            if "SCL" in process_bands:
+                scl_path = resample_raster(
+                    paths_20m[-1]["path"],
+                    target_size=paths_10m[0]["path"],
+                    resample_alg="nearest",
+                    dst_nodata=None,
+                    dtype="uint8",
+                    postfix="",
+                )
+
+                paths_20m[-1]["path"] = scl_path
+                paths_20m[-1]["size"] = 10
 
             paths_10m += paths_20m
 
@@ -286,59 +311,37 @@ def s2_ready_ml(
             patches_masks[band["name"]] = thread_mask
 
     print("Saving 10m patches..")
+    out_10m = {}
+    out_10m_mask = {}
+
     if resample_20m_to_10m and process_20m:
         for resampled_img in paths_20m_resampled_to_10m:
             gdal.Unlink(resampled_img)
 
-        np.savez_compressed(
-            outdir + outname_10m,
-            B02=np.load(patches["B02"]) if "B02" in process_bands else None,
-            B03=np.load(patches["B03"]) if "B03" in process_bands else None,
-            B04=np.load(patches["B04"]) if "B04" in process_bands else None,
-            B05=np.load(patches["B05"]) if "B05" in process_bands else None,
-            B06=np.load(patches["B06"]) if "B06" in process_bands else None,
-            B07=np.load(patches["B07"]) if "B07" in process_bands else None,
-            B08=np.load(patches["B08"]) if "B08" in process_bands else None,
-            B8A=np.load(patches["B8A"]) if "B8A" in process_bands else None,
-            B11=np.load(patches["B11"]) if "B11" in process_bands else None,
-            B12=np.load(patches["B12"]) if "B12" in process_bands else None,
-            SCL=np.load(patches["SCL"]) if "SCL" in process_bands else None,
-        )
+        for band_name in process_bands:
+            out_10m[band_name] = np.load(patches[band_name])
 
-        if aoi_mask_output:
-            np.savez_compressed(
-                outdir + outname_10m_masks,
-                B02=np.load(patches_masks["B02"]) if "B02" in process_bands else None,
-                B03=np.load(patches_masks["B03"]) if "B03" in process_bands else None,
-                B04=np.load(patches_masks["B04"]) if "B04" in process_bands else None,
-                B05=np.load(patches_masks["B05"]) if "B05" in process_bands else None,
-                B06=np.load(patches_masks["B06"]) if "B06" in process_bands else None,
-                B07=np.load(patches_masks["B07"]) if "B07" in process_bands else None,
-                B08=np.load(patches_masks["B08"]) if "B08" in process_bands else None,
-                B8A=np.load(patches_masks["B8A"]) if "B8A" in process_bands else None,
-                B11=np.load(patches_masks["B11"]) if "B11" in process_bands else None,
-                B12=np.load(patches_masks["B12"]) if "B12" in process_bands else None,
-                SCL=np.load(patches_masks["SCL"]) if "SCL" in process_bands else None,
-            )
+            if aoi_mask_output:
+                out_10m_mask[band_name] = np.load(patches_masks[band_name])
 
     else:
+        for band_name in bands_10m:
+            if band_name not in process_bands:
+                continue
 
-        np.savez_compressed(
-            outdir + outname_10m,
-            B02=np.load(patches["B02"]) if "B02" in process_bands else None,
-            B03=np.load(patches["B03"]) if "B03" in process_bands else None,
-            B04=np.load(patches["B04"]) if "B04" in process_bands else None,
-            B08=np.load(patches["B08"]) if "B08" in process_bands else None,
-        )
+            out_10m[band_name] = np.load(patches[band_name])
 
-        if aoi_mask_output:
-            np.savez_compressed(
-                outdir + outname_10m_masks,
-                B02=np.load(patches_masks["B02"]) if "B02" in process_bands else None,
-                B03=np.load(patches_masks["B03"]) if "B03" in process_bands else None,
-                B04=np.load(patches_masks["B04"]) if "B04" in process_bands else None,
-                B08=np.load(patches_masks["B08"]) if "B08" in process_bands else None,
-            )
+            if aoi_mask_output:
+                out_10m_mask[band_name] = np.load(patches_masks[band_name])
+
+    np.savez_compressed(os.path.join(outdir, outname_10m), **out_10m)
+
+    if aoi_mask_output:
+        np.savez_compressed(os.path.join(outdir, outname_10m_masks), **out_10m_mask)
+
+    # Clear memory
+    out_10m = None
+    out_10m_mask = None
 
     if clean:
         print("Cleaning 10m temporary files..")
@@ -350,11 +353,10 @@ def s2_ready_ml(
                     os.remove(patches_masks[band])
 
 
+    patches = {}
+    patches_masks = {}
     if not resample_20m_to_10m and process_20m:
         print("Extracting 20m patches..")
-
-        patches = {}
-        patches_masks = {}
 
         if use_multithreading:
 
@@ -413,61 +415,36 @@ def s2_ready_ml(
                 patches_masks[band["name"]] = thread_mask
 
         print("Saving 20m patches..")
+        out_20m = {}
+        out_20m_mask = {}
+
         if include_downsampled_bands:
             gdal.Unlink(b08_resampled)
-            np.savez_compressed(
-                outdir + outname_20m,
-                B02=np.load(patches["B02"]) if "B02" in process_bands else None,
-                B03=np.load(patches["B03"]) if "B03" in process_bands else None,
-                B04=np.load(patches["B04"]) if "B04" in process_bands else None,
-                B05=np.load(patches["B05"]) if "B05" in process_bands else None,
-                B06=np.load(patches["B06"]) if "B06" in process_bands else None,
-                B07=np.load(patches["B07"]) if "B07" in process_bands else None,
-                B08=np.load(patches["B08"]) if "B08" in process_bands else None,
-                B8A=np.load(patches["B8A"]) if "B8A" in process_bands else None,
-                B11=np.load(patches["B11"]) if "B11" in process_bands else None,
-                B12=np.load(patches["B12"]) if "B12" in process_bands else None,
-                SCL=np.load(patches["SCL"]) if "SCL" in process_bands else None,
-            )
 
-            if aoi_mask_output:
-                np.savez_compressed(
-                    outdir + outname_20m_masks,
-                    B02=np.load(patches_masks["B02"]) if "B02" in process_bands else None,
-                    B03=np.load(patches_masks["B03"]) if "B03" in process_bands else None,
-                    B04=np.load(patches_masks["B04"]) if "B04" in process_bands else None,
-                    B05=np.load(patches_masks["B05"]) if "B05" in process_bands else None,
-                    B06=np.load(patches_masks["B06"]) if "B06" in process_bands else None,
-                    B07=np.load(patches_masks["B07"]) if "B07" in process_bands else None,
-                    B08=np.load(patches_masks["B08"]) if "B08" in process_bands else None,
-                    B8A=np.load(patches_masks["B8A"]) if "B8A" in process_bands else None,
-                    B11=np.load(patches_masks["B11"]) if "B11" in process_bands else None,
-                    B12=np.load(patches_masks["B12"]) if "B12" in process_bands else None,
-                    SCL=np.load(patches_masks["SCL"]) if "SCL" in process_bands else None,
-                )
+            for band_name in process_bands:
+                out_20m[band_name] = np.load(patches[band_name])
+
+                if aoi_mask_output:
+                    out_20m_mask[band_name] = np.load(patches_masks[band_name])
+
         else:
-            np.savez_compressed(
-                outdir + outname_20m,
-                B05=np.load(patches["B05"]) if "B05" in process_bands else None,
-                B06=np.load(patches["B06"]) if "B06" in process_bands else None,
-                B07=np.load(patches["B07"]) if "B07" in process_bands else None,
-                B8A=np.load(patches["B8A"]) if "B8A" in process_bands else None,
-                B11=np.load(patches["B11"]) if "B11" in process_bands else None,
-                B12=np.load(patches["B12"]) if "B12" in process_bands else None,
-                SCL=np.load(patches["SCL"]) if "SCL" in process_bands else None,
-            )
+            for band_name in bands_20m:
+                if band_name not in process_bands:
+                    continue
 
-            if aoi_mask_output:
-                np.savez_compressed(
-                    outdir + outname_20m_masks,                   
-                    B05=np.load(patches_masks["B05"]) if "B05" in process_bands else None,
-                    B06=np.load(patches_masks["B06"]) if "B06" in process_bands else None,
-                    B07=np.load(patches_masks["B07"]) if "B07" in process_bands else None,
-                    B8A=np.load(patches_masks["B8A"]) if "B8A" in process_bands else None,
-                    B11=np.load(patches_masks["B11"]) if "B11" in process_bands else None,
-                    B12=np.load(patches_masks["B12"]) if "B12" in process_bands else None,
-                    SCL=np.load(patches_masks["SCL"]) if "SCL" in process_bands else None,
-                )
+                out_20m[band_name] = np.load(patches[band_name])
+
+                if aoi_mask_output:
+                    out_20m_mask[band_name] = np.load(patches_masks[band_name])
+
+        np.savez_compressed(os.path.join(outdir, outname_20m), **out_20m)
+
+        if aoi_mask_output:
+            np.savez_compressed(os.path.join(outdir, outname_20m_masks), **out_20m_mask)
+
+        # Clear memory
+        out_20m = None
+        out_20m_mask = None
 
         if clean:
             print("Cleaning 20m temporary files..")
@@ -478,11 +455,25 @@ def s2_ready_ml(
                     if aoi_mask_output:
                         os.remove(patches_masks[band])
 
+    # Clear memory
+    patches = None
+    patches_masks = None
+
+    metadata = None
+    if save_metadata:
+        metadata_path_base = "_".join(os.path.splitext(os.path.basename(paths_10m[0]["path"]))[0].split("_")[:-2])
+        metadata_path = outdir + metadata_path_base + "_metadata.pickle"
+        metadata = get_metadata(s2_path_file)
+
+        with open(metadata_path, 'wb') as handle:
+            pickle.dump(metadata, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
     return (
         outdir + outname_10m,
         outdir + outname_10m_masks if aoi_mask_output else None,
         outdir + outname_20m,
         outdir + outname_20m_masks if aoi_mask_output else None,
+        metadata,
     )
 
 
@@ -493,13 +484,13 @@ if __name__ == "__main__":
     beirut = "/home/casper/Desktop/data/beirut_boundary.gpkg"
     safe = glob(s2_path + "*.SAFE")[0]
     # s2_ready_ml(safe, s2_path, resample_20m_to_10m=False, process_20m=True)
-    path_arr_10m, path_arr_10m_mask, path_arr_20m, path_arr_20m_mask = s2_ready_ml(
+    path_arr_10m, path_arr_10m_mask, path_arr_20m, path_arr_20m_mask, metadata = s2_ready_ml(
         safe,
         s2_path,
-        aoi_mask=beirut,
-        aoi_mask_tolerance=0.0,
-        aoi_mask_output=False,
-        process_bands=["B02", "B03", "B04", "B05", "B06", "B07", "B08", "B11", "B12"],
+        # aoi_mask=beirut,
+        # aoi_mask_tolerance=0.0,
+        # aoi_mask_output=False,
+        process_bands=["B02", "B04", "B05", "B06", "B07", "B08", "B11", "B12"],
         tmpdir=tmpdir,
     )
 
