@@ -5,7 +5,7 @@ Turn a Sentinel 2 file into a ML dataset.
 # standard
 import os
 import sys; sys.path.append("../../") # Path: buteo_eo/sentinel_2/s2_preprocess.py
-from concurrent.futures import ThreadPoolExecutor, process
+from concurrent.futures import ThreadPoolExecutor
 
 # external
 import numpy as np
@@ -60,6 +60,24 @@ def normalise_s2_arr(
     return arr.astype(np.float32) if force_float32 else arr
 
 
+def normalise_s2_ml(npz_file):
+    loaded = np.load(npz_file)
+    files = loaded.files
+
+    normed = {}
+
+    for file in files:
+        if file == "SCL":
+            normed[file] = loaded[file]
+            continue
+
+        print(f"Normalising: {file}")
+        normed[file] = normalise_s2_arr(loaded[file])
+    
+    outname = os.path.join(os.path.dirname(npz_file), os.path.splitext(os.path.basename(npz_file))[0] + "_normed.npz")
+    np.savez(outname, **normed)
+
+
 # TODO
 def augment_s2_arr(arr):
     return arr
@@ -86,7 +104,9 @@ def s2_ready_ml(
     labels_baseline=0,
     labels_resolution="match_10m",
     labels_fuzz_from=False,
+    labels_fuzz=False,
     use_multithreading=True,
+    tmpdir=None,
     clean=True,
 ):
     """
@@ -126,6 +146,9 @@ def s2_ready_ml(
 
     if aoi_mask_output and aoi_mask is None:
         raise ValueError("AOI mask output requires an AOI mask")
+
+    if tmpdir is None:
+        tmpdir = outdir
 
     all_bands = ["B02", "B03", "B04", "B05", "B06", "B07", "B08", "B8A", "B09", "B10", "B11", "B12", "SCL"]
     if process_bands == "all" or process_bands is None or process_bands is False or len(process_bands) == 0:
@@ -217,7 +240,7 @@ def s2_ready_ml(
 
             kwargs.append({
                 "raster_list": band["path"],
-                "outdir": outdir,
+                "outdir": tmpdir,
                 "patch_size": patch_size,
                 "offsets": offsets,
                 "offset_count": offset_count,
@@ -244,10 +267,10 @@ def s2_ready_ml(
             if band["name"] not in process_bands:
                 continue
 
-            print(f"Extracting patches from {os.path.basename(path)}")
+            print(f"Extracting patches from {os.path.basename(band['path'])}")
             results = extract_patches(
-                raster_list=path["path"],
-                outdir=outdir,
+                raster_list=band["path"],
+                outdir=tmpdir,
                 patch_size=patch_size,
                 offsets=offsets,
                 offset_count=offset_count,
@@ -257,10 +280,10 @@ def s2_ready_ml(
                 aoi_mask_output=aoi_mask_output,
             )
 
-            thread_arr, thread_mask, thread_name = results
+            thread_arr, thread_mask, _thread_name = results
 
-            patches[thread_name] = thread_arr
-            patches_masks[thread_name] = thread_mask
+            patches[band["name"]] = thread_arr
+            patches_masks[band["name"]] = thread_mask
 
     print("Saving 10m patches..")
     if resample_20m_to_10m and process_20m:
@@ -299,6 +322,7 @@ def s2_ready_ml(
             )
 
     else:
+
         np.savez_compressed(
             outdir + outname_10m,
             B02=np.load(patches["B02"]) if "B02" in process_bands else None,
@@ -318,13 +342,13 @@ def s2_ready_ml(
 
     if clean:
         print("Cleaning 10m temporary files..")
-        for file in patches:
-            for band in process_bands:
+        for band in process_bands:
+            if band in patches:
                 os.remove(patches[band])
 
-        for file in patches_masks:
-            for band in process_bands:
-                os.remove(patches[band])
+                if aoi_mask_output:
+                    os.remove(patches_masks[band])
+
 
     if not resample_20m_to_10m and process_20m:
         print("Extracting 20m patches..")
@@ -336,9 +360,13 @@ def s2_ready_ml(
 
             kwargs = []
             for idx, band in enumerate(paths_20m):
+
+                if band["name"] not in process_bands:
+                    continue
+
                 kwargs.append({
                     "raster_list": band["path"],
-                    "outdir": outdir,
+                    "outdir": tmpdir,
                     "patch_size": patch_size // 2,
                     "offsets": offsets,
                     "offset_count": offset_count,
@@ -360,12 +388,16 @@ def s2_ready_ml(
                 patches_masks[thread_name] = thread_mask
 
         else:
-            for _idx, path in enumerate(paths_20m):
-                print(f"Extracting patches from {os.path.basename(path)}")
+            for _idx, band in enumerate(paths_20m):
+
+                if band["name"] not in process_bands:
+                    continue
+
+                print(f"Extracting patches from {os.path.basename(band['path'])}")
                 
                 results = extract_patches(
-                    raster_list=path,
-                    outdir=outdir,
+                    raster_list=band["path"],
+                    outdir=tmpdir,
                     patch_size=patch_size // 2,
                     offsets=offsets,
                     offset_count=offset_count,
@@ -375,10 +407,10 @@ def s2_ready_ml(
                     aoi_mask_output=aoi_mask_output,
                 )
 
-                thread_arr, thread_mask, thread_name = results
+                thread_arr, thread_mask, _thread_name = results
 
-                patches[thread_name] = thread_arr
-                patches_masks[thread_name] = thread_mask
+                patches[band["name"]] = thread_arr
+                patches_masks[band["name"]] = thread_mask
 
         print("Saving 20m patches..")
         if include_downsampled_bands:
@@ -439,14 +471,12 @@ def s2_ready_ml(
 
         if clean:
             print("Cleaning 20m temporary files..")
-            for file in patches:
-                for band in process_bands:
+            for band in process_bands:
+                if band in patches:
                     os.remove(patches[band])
 
-            for file in patches_masks:
-                for band in process_bands:
-                    os.remove(patches[band])
-
+                    if aoi_mask_output:
+                        os.remove(patches_masks[band])
 
     return (
         outdir + outname_10m,
@@ -459,20 +489,21 @@ def s2_ready_ml(
 if __name__ == "__main__":
     from glob import glob
     s2_path = "/home/casper/Desktop/data/sentinel2_images/"
+    tmpdir = "/home/casper/Desktop/data/sentinel2_images/tmp/"
     beirut = "/home/casper/Desktop/data/beirut_boundary.gpkg"
     safe = glob(s2_path + "*.SAFE")[0]
     # s2_ready_ml(safe, s2_path, resample_20m_to_10m=False, process_20m=True)
-    bob = s2_ready_ml(
+    path_arr_10m, path_arr_10m_mask, path_arr_20m, path_arr_20m_mask = s2_ready_ml(
         safe,
         s2_path,
-        resample_20m_to_10m=False,
-        process_20m=True,
-        offsets=False,
         aoi_mask=beirut,
-        aoi_mask_tolerance=0.5,
-        aoi_mask_output=True,
-        use_multithreading=False,
-        include_downsampled_bands=False,
+        aoi_mask_tolerance=0.0,
+        aoi_mask_output=False,
+        process_bands=["B02", "B03", "B04", "B05", "B06", "B07", "B08", "B11", "B12"],
+        tmpdir=tmpdir,
     )
+
+    normalise_s2_ml(path_arr_10m)
+    normalise_s2_ml(path_arr_20m)
 
     import pdb; pdb.set_trace()
