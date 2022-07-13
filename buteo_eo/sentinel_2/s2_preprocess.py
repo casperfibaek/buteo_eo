@@ -87,6 +87,7 @@ def augment_s2_arr(arr):
     return arr
 
 
+# TODO: Include labels
 def s2_ready_ml(
     s2_path_file,
     outdir,
@@ -168,7 +169,6 @@ def s2_ready_ml(
     if process_20m and not any(x in bands_20m for x in process_bands):
         raise ValueError("Cannot process 20m bands if non of them are in process_bands")
 
-    # 10 meter bands
     paths_10m = [
         { "name": "B02", "path": paths["10m"]["B02"], "size": 10 },
         { "name": "B03", "path": paths["10m"]["B03"], "size": 10 },
@@ -176,12 +176,11 @@ def s2_ready_ml(
         { "name": "B08", "path": paths["10m"]["B08"], "size": 10 },
     ]
 
-    # 20 meter bands
     paths_20m_downsampled = [
         { "name": "B02", "path": paths["20m"]["B02"], "size": 20 },
         { "name": "B03", "path": paths["20m"]["B03"], "size": 20 },
         { "name": "B04", "path": paths["20m"]["B04"], "size": 20 },
-        # paths["20m"]["B08"], not included in 20m. Will be resampled from 10m
+        # Band 8 not included in 20m. Will be resampled from 10m
     ]
 
     paths_20m = [
@@ -483,13 +482,14 @@ if __name__ == "__main__":
     tmpdir = "/home/casper/Desktop/data/sentinel2_images/tmp/"
     beirut = "/home/casper/Desktop/data/beirut_boundary.gpkg"
     safe = glob(s2_path + "*.SAFE")[0]
-    # s2_ready_ml(safe, s2_path, resample_20m_to_10m=False, process_20m=True)
+
     path_arr_10m, path_arr_10m_mask, path_arr_20m, path_arr_20m_mask, metadata = s2_ready_ml(
         safe,
         s2_path,
-        # aoi_mask=beirut,
-        # aoi_mask_tolerance=0.0,
-        # aoi_mask_output=False,
+        aoi_mask=beirut,
+        aoi_mask_tolerance=0.0,
+        aoi_mask_output=False,
+
         process_bands=["B02", "B04", "B05", "B06", "B07", "B08", "B11", "B12"],
         tmpdir=tmpdir,
     )
