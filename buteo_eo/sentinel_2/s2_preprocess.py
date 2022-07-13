@@ -73,17 +73,20 @@ def s2_ready_ml(
     process_20m=True,
     offsets=True,
     offset_count=3,
+    include_downsampled_bands=False,
     resample_20m_to_10m=False,
     resample_alg="bilinear",
     aoi_mask=None,
     aoi_mask_tolerance=0.0, # 0 means no tolerance for pixels outside of AIO mask
-    use_multithreading=True,
-    include_downsampled_bands=False,
+    aoi_mask_layerid=0,
+    aoi_mask_output=False,
+    aoi_mask_apply=False,
     labels=None,
     labels_attribute="class", # None creates a binary mask of 0-1
     labels_baseline=0,
     labels_resolution="match_10m",
     labels_fuzz_from=False,
+    use_multithreading=True,
     clean=True,
 ):
     """
@@ -116,6 +119,7 @@ def s2_ready_ml(
     assert patch_size % 2 == 0, "Patch size must be even"
     assert outdir is not None, "Output directory must be specified"
     assert os.path.isdir(outdir), "Output directory must exist"
+    assert aoi_mask_tolerance >= 0.0 and aoi_mask_tolerance <= 1.0, "AOI mask tolerance must be between 0 and 1"
 
     if include_downsampled_bands and (not process_20m or resample_20m_to_10m):
         raise ValueError("Cannot include downsampled bands if not processing 20m bands. Cannot resample 20m to 10m and include downsampled bands.")
@@ -191,6 +195,9 @@ def s2_ready_ml(
                 "offset_count": offset_count,
                 "aoi_mask": aoi_mask,
                 "aoi_mask_tolerance": aoi_mask_tolerance,
+                "aoi_mask_layerid": aoi_mask_layerid,
+                "aoi_mask_output": aoi_mask_output,
+                "aoi_mask_apply": aoi_mask_apply,
                 "thread_id": idx,
             })
 
@@ -208,6 +215,9 @@ def s2_ready_ml(
                 offset_count=offset_count,
                 aoi_mask=aoi_mask,
                 aoi_mask_tolerance=aoi_mask_tolerance,
+                aoi_mask_layerid=aoi_mask_layerid,
+                aoi_mask_output=aoi_mask_output,
+                aoi_mask_apply=aoi_mask_apply,
             )
             patches.append(patch)
 
@@ -260,6 +270,9 @@ def s2_ready_ml(
                     "offset_count": offset_count,
                     "aoi_mask": aoi_mask,
                     "aoi_mask_tolerance": aoi_mask_tolerance,
+                    "aoi_mask_layerid": aoi_mask_layerid,
+                    "aoi_mask_output": aoi_mask_output,
+                    "aoi_mask_apply": aoi_mask_apply,
                     "thread_id": idx,
                 })
 
@@ -278,6 +291,9 @@ def s2_ready_ml(
                     offset_count=offset_count,
                     aoi_mask=aoi_mask,
                     aoi_mask_tolerance=aoi_mask_tolerance,
+                    aoi_mask_layerid=aoi_mask_layerid,
+                    aoi_mask_output=aoi_mask_output,
+                    aoi_mask_apply=aoi_mask_apply,
                 )
                 patches.append(patch)
 
@@ -332,12 +348,19 @@ if __name__ == "__main__":
         s2_path,
         resample_20m_to_10m=False,
         process_20m=True,
-        normalise=False,
         offsets=False,
         aoi_mask=beirut,
-        aoi_mask_tolerance=0.0,
-        use_multithreading=True,
-        include_downsampled_bands=True,
-        normalise_original_max_value=10000.0,
+        aoi_mask_tolerance=0.5,
+        aoi_mask_apply=True,
+        aoi_mask_output=False,
+        use_multithreading=False,
+        include_downsampled_bands=False,
     )
-    print(bob)
+
+    b10m = np.load(bob[0])
+    b20m = np.load(bob[1])
+    
+    carl = np.load(s2_path + "mask_T36SYC_20220629T081609_B02_10m.npy")
+
+
+    import pdb; pdb.set_trace()

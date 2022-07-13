@@ -35,23 +35,23 @@ from buteo_eo.ai.ml_utils import get_offsets
 from buteo_eo.ai.patch_utils import get_overlaps
 
 
-# OBS the order is important do to the threading in s2_preprocess.
 def extract_patches(
     raster_list,
     outdir,
     patch_size=32,
-    aoi_mask=None,
-    aoi_mask_tolerance=0.0,
     offsets=True,
     offset_count=3,
     merge_output=True,
     border_check=True,
-    force_align=True,
-    output_zone_masks=False,
-    mask_reference=None,
-    apply_mask=None,
-    fill_value=0,
-    zone_layer_id=0,
+    force_align=False,
+    aoi_mask=None,
+    aoi_mask_tolerance=0.0,
+    aoi_mask_layerid=0,
+    aoi_mask_output=False,
+    aoi_mask_apply=False,
+    binary_mask=None,
+    binary_mask_apply=None,
+    binary_mask_fill_value=0,
     prefix="",
     postfix="",
     thread_id="",
@@ -85,7 +85,7 @@ def extract_patches(
             )
             raster_list = align_rasters(raster_list, postfix="")
         else:
-            raise ValueError("Rasters in raster_list are not aligned.")
+            raise ValueError("Rasters in raster_list are not aligned. Set force_align=True if you want to realign rasters.")
 
     offsets = get_offsets(patch_size, number_of_offsets=offset_count) if offsets else [[0, 0]]
     raster_metadata = raster_to_metadata(raster_list[0], create_geometry=True)
@@ -97,8 +97,6 @@ def extract_patches(
     
     aoi_mask = reproject_vector(aoi_mask, raster_metadata["projection"], prefix=str(thread_id) + "_", copy_if_same=True)
 
-    # TODO: Delete if in memeory vector
-
     zones_meta = vector_to_metadata(aoi_mask)
 
     mem_driver = ogr.GetDriverByName("ESRI Shapefile")
@@ -106,15 +104,15 @@ def extract_patches(
     if zones_meta["layer_count"] == 0:
         raise ValueError("Vector contains no layers.")
 
-    zones_layer_meta = zones_meta["layers"][zone_layer_id]
+    zones_layer_meta = zones_meta["layers"][aoi_mask_layerid]
 
     if zones_layer_meta["geom_type"] not in ["Multi Polygon", "Polygon"]:
         raise ValueError("clip geom is not Polygon or Multi Polygon.")
 
     zones_ogr = open_vector(aoi_mask)
-    zones_layer = zones_ogr.GetLayer(zone_layer_id)
+    zones_layer = zones_ogr.GetLayer(aoi_mask_layerid)
     feature_defn = zones_layer.GetLayerDefn()
-    fids = vector_get_fids(zones_ogr, zone_layer_id)
+    fids = vector_get_fids(zones_ogr, aoi_mask_layerid)
 
     if verbose:
         progress(0, len(fids) * len(raster_list), "processing fids")
@@ -149,9 +147,9 @@ def extract_patches(
             uuid_valid = str(uuid4().int)
             valid_path = f"/vsimem/{thread_id}validmask_{str(fid)}_{uuid_valid}_{postfix}.tif"
 
-            if mask_reference is not None:
+            if binary_mask is not None:
                 extent = clip_raster(
-                    mask_reference,
+                    binary_mask,
                     clip_geom=fid_path,
                     adjust_bbox=True,
                     all_touch=False,
@@ -160,7 +158,7 @@ def extract_patches(
 
                 tmp_rasterized_vector = rasterize_vector(
                     fid_path,
-                    mask_reference,
+                    binary_mask,
                     extent=extent,
                 )
 
@@ -237,22 +235,24 @@ def extract_patches(
             arr = arr[valid_mask]
             valid_masked = valid_offsets[valid_mask]
 
+            if aoi_mask_apply:
+                arr = np.ma.masked_array(arr, mask=valid_masked, fill_value=0)
+            
             if merge_output:
                 list_extracted.append(arr)
                 list_masks.append(valid_masked)
-
             else:
                 out_path = f"{outdir}{prefix}{str(fid)}_{name}{postfix}.npy"
-                np.save(out_path, arr.filled(fill_value))
+                np.save(out_path, arr.filled(binary_mask_fill_value))
 
                 outputs.append(out_path)
 
-                if output_zone_masks:
+                if aoi_mask_output:
                     np.save(
                         f"{outdir}{prefix}{str(fid)}_mask_{name}{postfix}.npy",
-                        valid_masked.filled(fill_value),
+                        valid_masked.filled(binary_mask_fill_value),
                     )
-
+                
             if fid not in processed_fids:
                 processed_fids.append(fid)
 
@@ -268,21 +268,26 @@ def extract_patches(
 
         if merge_output:
 
-            out_arr = np.ma.concatenate(list_extracted).filled(fill_value)
+            if aoi_mask is not None and aoi_mask_apply:
+                out_arr = np.ma.concatenate(list_extracted)
+            else:
+                out_arr = np.ma.concatenate(list_extracted).filled(binary_mask_fill_value)
+
+
             out_path = f"{outdir}{prefix}{name}{postfix}.npy"
 
-            if apply_mask is None:
-                apply_mask = np.ones(out_arr.shape[0], dtype="bool")
+            if binary_mask_apply is None:
+                binary_mask_apply = np.ones(out_arr.shape[0], dtype="bool")
             else:
-                apply_mask = apply_mask
+                binary_mask_apply = binary_mask_apply
 
-            np.save(out_path, out_arr[apply_mask])
+            np.save(out_path, out_arr[binary_mask_apply])
             outputs.append(out_path)
 
-            if output_zone_masks:
+            if aoi_mask_output:
                 np.save(
                     f"{outdir}{prefix}mask_{name}{postfix}.npy",
-                    np.ma.concatenate(list_masks).filled(fill_value)[apply_mask],
+                    np.ma.concatenate(list_masks).filled(binary_mask_fill_value)[binary_mask_apply],
                 )
     if aoi_mask is not None:
         gdal.Unlink(aoi_mask)
