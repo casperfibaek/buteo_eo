@@ -497,4 +497,6 @@ if __name__ == "__main__":
     normalise_s2_ml(path_arr_10m)
     normalise_s2_ml(path_arr_20m)
 
+    mem = [ds.name for ds in gdal.listdir('/vsimem')]
+
     import pdb; pdb.set_trace()
