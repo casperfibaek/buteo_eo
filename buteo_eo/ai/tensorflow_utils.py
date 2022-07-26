@@ -52,6 +52,23 @@ class Mish(Activation):
         self.__name__ = "Mish"
 
 # From user2646087 @ GitHub
+def timedelta_format(td_object):
+    seconds = int(td_object.total_seconds())
+    periods = [
+        ('d', 60*60*24),
+        ('h', 60*60),
+        ('m', 60),
+        ('s', 1)
+    ]
+
+    strings=[]
+    for period_name, period_seconds in periods:
+        if seconds > period_seconds:
+            period_value , seconds = divmod(seconds, period_seconds)
+            strings.append(f"{period_value}{period_name}")
+
+    return " ".join(strings)
+
 class SaveBestModel(tf.keras.callbacks.Callback):
     def __init__(self, save_best_metric="val_loss", this_max=False, initial_weights=None):
         self.save_best_metric = save_best_metric
@@ -86,12 +103,12 @@ class TimingCallback(tf.keras.callbacks.Callback):
         
     def on_train_begin(self, logs=None):
         self.time_started = datetime.now()
-        print(f'\nTraining started: {self.time_started}\n')
+        print(f'\nTraining started: {self.time_started.strftime("%Y-%m-%d %H:%M:%S")}\n')
         
     def on_train_end(self, logs=None):
         self.time_finished = datetime.now()
-        train_duration = str(self.time_finished - self.time_started)
-        print(f'\nTraining finished: {self.time_finished}, duration: {train_duration}')
+        train_duration = (self.time_finished - self.time_started)
+        print(f'\nTraining finished: {self.time_finished.strftime("%Y-%m-%d %H:%M:%S")}, duration: {timedelta_format(train_duration)}')
         
         metrics = [] 
         for metric in self.monitor:

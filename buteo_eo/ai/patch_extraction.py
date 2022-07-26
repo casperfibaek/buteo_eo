@@ -243,6 +243,38 @@ def extract_patches(
     return outputs, outputs_masks, [thread_name] * len(outputs)
 
 
+from glob import glob
+folder = "/home/casper/Desktop/dataset_test/"
+
+bands = glob(folder + "B*_10m.npy")
+loaded = []
+for band in bands:
+    load = np.load(band)
+    loaded.append((np.where(load == 65535, 0, load) / 10000.0).astype(np.float32))
+
+stacked_bands = np.concatenate(loaded, axis=3)
+
+labels = glob(folder + "labels*_10m.npy")
+loaded = []
+for label in labels:
+    load = np.load(label)
+    loaded.append(np.where(load < 0, 0, load))
+
+stacked_labels = np.concatenate(loaded, axis=3)
+
+np.savez_compressed(folder + "roads_builds_bornholm.npz", bands=stacked_bands, labels=stacked_labels)
+
+
+# images = glob(folder + "*_10m.tif")
+# extract_patches(
+#     images,
+#     patch_size=128,
+#     offset_count=9,
+#     outdir=folder,
+#     aoi_mask=folder + "mask.gpkg"
+# )
+
+
 def rasterize_labels(
     geom,
     reference,
