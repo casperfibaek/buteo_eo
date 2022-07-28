@@ -8,7 +8,7 @@ TODO:
 from datetime import datetime
 
 import tensorflow as tf
-from tensorflow.keras.layers import Activation
+from tensorflow.keras.layers import Activation, Embedding, Dense
 from tensorflow.keras.utils import get_custom_objects
 from tensorflow.keras.losses import mean_squared_error, mean_absolute_error
 
@@ -68,6 +68,101 @@ def timedelta_format(td_object):
             strings.append(f"{period_value}{period_name}")
 
     return " ".join(strings)
+
+
+class PatchExtractor(tf.keras.layers.Layer):
+    """Extract patches from a tf.Layer. Only channel last format allowed."""
+
+    def __init__(self, shape_x=16, shape_y=16):
+        super(PatchExtractor, self).__init__()
+        self.shape_x = shape_x
+        self.shape_y = shape_y
+
+    def call(self, images):
+        if len(tf.shape(images)) == 3:
+            images = tf.expand_dims(images, axis=0)
+
+        sizes = [1, self.shape_x, self.shape_y, 1]
+        strides = [1, self.shape_x, self.shape_y, 1]
+
+        patches = tf.image.extract_patches(
+            images=images,
+            sizes=sizes,
+            strides=strides,
+            rates=[1, 1, 1, 1],
+            padding="VALID",
+        )
+
+        batch_size = tf.shape(images)[0]
+        patch_dims = patches.shape[-1]
+        patches = tf.reshape(patches, [batch_size, -1, patch_dims])
+
+        return patches
+
+class LocationEncoder(tf.keras.layers.Layer):
+    """Encode the location of a tf.layer"""
+
+    def call(self, patch):
+        patch_shape = tf.shape(patch)
+        number_of_patches = patch_shape[1] + tf.constant(1, tf.uint8)
+        projection_dimensions = patch_shape[-1]
+
+        positions = tf.range(start=tf.constant(0, tf.int8), limit=number_of_patches, delta=1)
+        position_embedding = Embedding(
+            input_dim=projection_dimensions,
+            output_dim=projection_dimensions,
+            trainable=True,
+        )(positions)
+
+        return tf.expand_dims(position_embedding, axis=0)
+
+class PatchProjector(tf.keras.layers.Layer):
+    """Linear projection and embedding of a tf.Layer."""
+
+    def call(self, patch):
+        patch_shape = tf.shape(patch)
+        batch = tf.shape(patch)[0]
+        projection_dimensions = patch_shape[-1]
+
+        w_init = tf.random_normal_initializer()
+        class_token = w_init(shape=(1, projection_dimensions))
+        class_token = tf.Variable(initial_value=class_token, trainable=True)
+        class_token = tf.tile(class_token, multiples = [batch, 1])
+        class_token = tf.reshape(class_token, (batch, 1, projection_dimensions))
+
+        projection = Dense(units=projection_dimensions)
+        patches_embed = projection(patch)
+        patches_embed = tf.concat([patches_embed, class_token], 1)
+
+        return patches_embed
+
+class VitEncoder(tf.keras.layers.Layer):
+    def __init__(self, shape_x=16, shape_y=16, channel_last=False):
+        super(VitEncoder, self).__init__()
+        self.shape_x = shape_x
+        self.shape_y = shape_y
+        self.channel_last = channel_last
+
+    def call(self, image):
+        patches = PatchExtractor(shape_x=self.shape_x, shape_y=self.shape_y)(image)
+        print(patches.shape)
+        location = LocationEncoder()(patches)
+        print(location.shape)
+        projection = PatchProjector()(patches)
+        print(projection.shape)
+
+        merged = location + projection
+
+        if self.channel_last:
+            merged_shape = tf.shape(merged)
+            merged = tf.reshape(
+                merged,
+                (merged_shape[1], merged_shape[2], merged_shape[0]),
+            )
+
+        return merged
+
+
 
 class SaveBestModel(tf.keras.callbacks.Callback):
     def __init__(self, save_best_metric="val_loss", this_max=False, initial_weights=None):
