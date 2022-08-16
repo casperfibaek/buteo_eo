@@ -76,6 +76,7 @@ class PatchExtractor(tf.keras.layers.Layer):
 
         return patches_reshaped
 
+
 class LocationEncoder(tf.keras.layers.Layer):
     """Encode the location of a tf.layer"""
     def __init__(self, number_of_patches, projection_dimensions):
@@ -89,7 +90,6 @@ class LocationEncoder(tf.keras.layers.Layer):
     def call(self):
 
         if self.init is None:
-            import pdb; pdb.set_trace()
             self.init = Embedding(input_dim=self.number_of_patches, output_dim=self.projection_dimensions, trainable=True)(self.range)
 
         position_embedding = self.init
@@ -123,6 +123,7 @@ class PatchProjector(tf.keras.layers.Layer):
 
         return patches_embed
 
+
 class VitEncoder(tf.keras.layers.Layer):
     def __init__(self, shape_x=16, shape_y=16, channel_last=False):
         super(VitEncoder, self).__init__()
@@ -139,8 +140,6 @@ class VitEncoder(tf.keras.layers.Layer):
 
         location = LocationEncoder(number_of_patches, projection_dimensions)()
         projection = PatchProjector(projection_dimensions)(patches)
-
-        import pdb; pdb.set_trace()
 
         merged = location + projection
 
@@ -190,6 +189,7 @@ class Block(tf.keras.layers.Layer):
         y = Add()([x3, x2])
         return y
 
+
 class TransformerEncoder(tf.keras.layers.Layer):
     def __init__(self, projection_dim, num_heads=4, num_blocks=12, dropout_rate=0.1):
         super(TransformerEncoder, self).__init__()
@@ -209,6 +209,60 @@ class TransformerEncoder(tf.keras.layers.Layer):
         x = self.norm(x)
         y = self.dropout(x)
         return y
+
+class PatchExtractor(tf.keras.layers.Layer):
+    """Extract patches from a tf.Layer. Only channel last format allowed."""
+
+    def __init__(self, patch_shape=(16, 16)):
+        super(PatchExtractor, self).__init__()
+        self.shape_x, self.shape_y = patch_shape
+        self.processed = None
+
+    def call(self, image):
+        if self.processed is None:
+            patch_size = (self.shape_x, self.shape_y)
+
+            sizes = [1, patch_size[0], patch_size[1], 1]
+            strides = [1, patch_size[0], patch_size[1], 1]
+
+            patches = tf.image.extract_patches(images=image, sizes=sizes, strides=strides, rates=[1, 1, 1, 1], padding="VALID")
+
+            patch_count = (image.shape[1] // patch_size[0]) * (image.shape[2] // patch_size[1])
+            pixel_count = patches.shape[-1]
+
+            self.processed = tf.reshape(patches, [tf.shape(image)[0], patch_count, patch_size[0], patch_size[1], image.shape[-1]])
+
+        return self.processed
+
+
+class PatchReshaper(tf.keras.layers.Layer):
+    """Extract patches from a tf.Layer. Only channel last format allowed."""
+
+    def __init__(self, patch_shape=(128, 128)):
+        super(PatchReshaper, self).__init__()
+        self.shape_x, self.shape_y = patch_shape
+        self.processed = None
+
+    def call(self, image):
+        if self.processed is None:
+            self.processed = tf.reshape(image, [tf.shape(image)[0], self.shape_x, self.shape_y, image.shape[-1]])
+        
+        return self.processed 
+
+
+class DenseApplier(tf.keras.layers.Layer):
+    """Extract patches from a tf.Layer. Only channel last format allowed."""
+    def __init__(self, patch_shape=(128, 128)):
+        super(DenseApplier, self).__init__()
+        self.processed = None
+
+    def call(self, image):
+        if self.processed is None:
+            patches = PatchExtractor()(image)
+            dense_layer = Dense(1024, activation="relu")(patches)
+            self.processed  = PatchReshaper()(dense_layer)
+
+        return self.processed
 
 def create_model(num_classes, num_heads=4, num_blocks=12, dropout_rate=0.1):
     model_input = Input(shape=input_shape)

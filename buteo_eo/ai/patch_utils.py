@@ -86,7 +86,7 @@ def get_overlaps(arr, offsets, tile_size, border_check=True):
                 border = arr[-tile_size:, :]
             elif (
                 end == "corner"
-                and ((arr.shape[1] % tile_size) != 0)
+                and ((arr.shape[0] % tile_size) != 0)
                 and ((arr.shape[1] % tile_size) != 0)
             ):
                 found = True

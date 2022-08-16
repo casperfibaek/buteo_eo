@@ -64,7 +64,7 @@ def timedelta_format(td_object):
     strings=[]
     for period_name, period_seconds in periods:
         if seconds > period_seconds:
-            period_value , seconds = divmod(seconds, period_seconds)
+            period_value, seconds = divmod(seconds, period_seconds)
             strings.append(f"{period_value}{period_name}")
 
     return " ".join(strings)
